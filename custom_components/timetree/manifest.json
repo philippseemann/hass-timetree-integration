@@ -5,6 +5,6 @@
   "config_flow": true,
   "documentation": "https://github.com/philippseemann/hass-timetree-integration",
   "iot_class": "cloud_polling",
-  "requirements": [],
+  "requirements": ["python-dateutil>=2.8.0"],
   "version": "0.1.0"
 }

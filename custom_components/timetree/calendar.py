@@ -59,15 +59,22 @@ class TimeTreeCalendarEntity(
     def event(self) -> CalendarEvent | None:
         """Return the next upcoming event or the current active event."""
         now = datetime.now(tz=ZoneInfo("UTC"))
-        events = self._get_sorted_events()
+        look_ahead = now + timedelta(days=30)
 
-        for ev in events:
-            start = _to_datetime(ev, use_end=False)
-            end = _to_datetime(ev, use_end=True)
-            if end > now:
-                return _map_event(ev)
+        candidates: list[CalendarEvent] = []
+        for ev in (self.coordinator.data or {}).values():
+            if ev.is_recurring:
+                candidates.extend(_expand_recurring(ev, now, look_ahead))
+            else:
+                end = _to_datetime(ev, use_end=True)
+                if end > now:
+                    candidates.append(_map_event(ev))
 
-        return None
+        if not candidates:
+            return None
+
+        candidates.sort(key=_sort_key)
+        return candidates[0]
 
     async def async_get_events(
         self,
@@ -77,21 +84,25 @@ class TimeTreeCalendarEntity(
     ) -> list[CalendarEvent]:
         """Return events within the requested time range."""
         events: list[CalendarEvent] = []
+        all_events = self.coordinator.data or {}
 
-        for ev in (self.coordinator.data or {}).values():
+        for ev in all_events.values():
+            # Recurring events must NOT be filtered by the original
+            # occurrence dates – they are expanded below and the expansion
+            # itself applies the date-range filter.
+            if ev.is_recurring:
+                events.extend(
+                    _expand_recurring(ev, start_date, end_date)
+                )
+                continue
+
             ev_start = _to_datetime(ev, use_end=False)
             ev_end = _to_datetime(ev, use_end=True)
 
             if ev_end <= start_date or ev_start >= end_date:
                 continue
 
-            # Expand recurring events
-            if ev.is_recurring:
-                events.extend(
-                    _expand_recurring(ev, start_date, end_date)
-                )
-            else:
-                events.append(_map_event(ev))
+            events.append(_map_event(ev))
 
         events.sort(key=_sort_key)
         return events
@@ -205,6 +216,7 @@ def _expand_recurring(
     """
     try:
         from dateutil.rrule import rruleset, rrulestr  # noqa: PLC0415
+        from dateutil.parser import parse as dtparse  # noqa: PLC0415
     except ImportError:
         _LOGGER.warning("dateutil not available, skipping RRULE expansion")
         return [_map_event(event)]
@@ -214,21 +226,35 @@ def _expand_recurring(
     dt_start = datetime.fromtimestamp(event.start_at / 1000, tz=tz)
 
     rset = rruleset()
+    has_rrule = False
     for rule_str in event.recurrences:
         if rule_str.startswith("RRULE:"):
             try:
                 rule = rrulestr(rule_str, dtstart=dt_start)
                 rset.rrule(rule)
+                has_rrule = True
             except (ValueError, TypeError):
                 _LOGGER.debug("Failed to parse RRULE: %s", rule_str)
                 return [_map_event(event)]
         elif rule_str.startswith("EXDATE:"):
-            # Handle exclusion dates if present
-            try:
-                ex_rule = rrulestr(rule_str, dtstart=dt_start)
-                rset.exrule(ex_rule)
-            except (ValueError, TypeError):
-                pass
+            # EXDATE contains individual excluded timestamps, not a rule.
+            # Format: "EXDATE:20250402T000000Z" or comma-separated list.
+            raw = rule_str[len("EXDATE:"):]
+            for part in raw.split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                try:
+                    exdt = dtparse(part)
+                    if exdt.tzinfo is None:
+                        exdt = exdt.replace(tzinfo=tz)
+                    rset.exdate(exdt)
+                except (ValueError, TypeError):
+                    _LOGGER.debug("Failed to parse EXDATE value: %s", part)
+
+    if not has_rrule:
+        # No parseable rules – return single mapped event if in range
+        return [_map_event(event)]
 
     occurrences = rset.between(range_start, range_end, inc=True)
     if not occurrences:
@@ -240,11 +266,16 @@ def _expand_recurring(
         occ_end_aware = occ_start_aware + timedelta(milliseconds=duration_ms)
 
         if event.all_day:
+            occ_start_date = occ_start_aware.date()
+            occ_end_date = occ_end_aware.date()
+            # HA expects exclusive end date; ensure at least 1-day span.
+            if occ_end_date <= occ_start_date:
+                occ_end_date = occ_start_date + timedelta(days=1)
             results.append(
                 CalendarEvent(
                     summary=event.title,
-                    start=occ_start_aware.date(),
-                    end=occ_end_aware.date(),
+                    start=occ_start_date,
+                    end=occ_end_date,
                     description=event.note,
                     location=event.location,
                     uid=f"{event.id}_{int(occ_start_aware.timestamp() * 1000)}",

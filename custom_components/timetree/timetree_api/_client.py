@@ -182,7 +182,9 @@ class TimeTreeApiClient:
     async def async_get_user(self) -> User:
         """Fetch the current authenticated user's profile."""
         data = await self._request("GET", USER_ENDPOINT)
-        return User.from_api_response(data)
+        # Unwrap if response is nested under a "user" key
+        user_data = data.get("user", data) if isinstance(data, dict) else data
+        return User.from_api_response(user_data)
 
     # ------------------------------------------------------------------ #
     #  Internal HTTP layer

@@ -17,7 +17,11 @@
       "Bash(gh auth status:*)",
       "Bash(git init:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "mcp__Home_Assistant__ha_config_set_dashboard",
+      "mcp__Home_Assistant__ha_get_state",
+      "mcp__Home_Assistant__ha_config_get_calendar_events",
+      "mcp__Home_Assistant__ha_get_logbook"
     ]
   }
 }

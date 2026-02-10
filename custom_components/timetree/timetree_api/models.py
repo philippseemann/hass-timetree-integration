@@ -7,11 +7,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-class EventCategory(enum.StrEnum):
-    """Event category types."""
+class EventCategory(enum.IntEnum):
+    """Event category types.
 
-    SCHEDULE = "schedule"
-    MEMO = "memo"
+    The TimeTree API uses numeric values: 1 = schedule, 2 = memo.
+    """
+
+    SCHEDULE = 1
+    MEMO = 2
 
 
 @dataclass(frozen=True)
@@ -118,7 +121,7 @@ class Event:
             end_at=data["end_at"],
             start_timezone=data.get("start_timezone", "UTC"),
             end_timezone=data.get("end_timezone", "UTC"),
-            category=EventCategory(data.get("category", "schedule")),
+            category=_parse_category(data.get("category")),
             label_id=data.get("label_id"),
             note=data.get("note"),
             location=data.get("location"),
@@ -198,3 +201,13 @@ class EventMutation:
         if self.alerts:
             result["alerts"] = list(self.alerts)
         return result
+
+
+def _parse_category(value: Any) -> EventCategory:
+    """Parse an event category, defaulting to SCHEDULE for unknown values."""
+    if value is None:
+        return EventCategory.SCHEDULE
+    try:
+        return EventCategory(value)
+    except (ValueError, KeyError):
+        return EventCategory.SCHEDULE

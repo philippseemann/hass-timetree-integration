@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import voluptuous as vol
@@ -13,6 +14,8 @@ from .timetree_api import (
 )
 
 from .const import CONF_EMAIL, CONF_PASSWORD, DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
@@ -45,6 +48,7 @@ class TimeTreeConfigFlow(ConfigFlow, domain=DOMAIN):
             except ApiConnectionError:
                 errors["base"] = "cannot_connect"
             except Exception:  # noqa: BLE001
+                _LOGGER.exception("Unexpected error during TimeTree login")
                 errors["base"] = "unknown"
             else:
                 await self.async_set_unique_id(user.id)
@@ -89,6 +93,7 @@ class TimeTreeConfigFlow(ConfigFlow, domain=DOMAIN):
             except ApiConnectionError:
                 errors["base"] = "cannot_connect"
             except Exception:  # noqa: BLE001
+                _LOGGER.exception("Unexpected error during TimeTree reauth")
                 errors["base"] = "unknown"
             else:
                 return self.async_update_reload_and_abort(

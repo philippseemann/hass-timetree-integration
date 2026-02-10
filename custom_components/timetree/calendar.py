@@ -93,7 +93,7 @@ class TimeTreeCalendarEntity(
             else:
                 events.append(_map_event(ev))
 
-        events.sort(key=lambda e: e.start)
+        events.sort(key=_sort_key)
         return events
 
     async def async_create_event(self, **kwargs: Any) -> None:
@@ -138,6 +138,17 @@ class TimeTreeCalendarEntity(
 # --------------------------------------------------------------------------- #
 #  Mapping helpers
 # --------------------------------------------------------------------------- #
+
+
+def _sort_key(ev: CalendarEvent) -> datetime:
+    """Normalise a CalendarEvent.start to a tz-aware datetime for sorting.
+
+    All-day events store ``start`` as ``date``; timed events as ``datetime``.
+    We convert ``date`` → midnight UTC so both types are comparable.
+    """
+    if isinstance(ev.start, datetime):
+        return ev.start
+    return datetime.combine(ev.start, datetime.min.time(), tzinfo=ZoneInfo("UTC"))
 
 
 def _to_datetime(event: Event, *, use_end: bool) -> datetime:

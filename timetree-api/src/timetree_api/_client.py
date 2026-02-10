@@ -121,8 +121,12 @@ class TimeTreeApiClient:
         calendar_id: str,
         *,
         since: int | None = None,
-    ) -> list[Event]:
-        """Fetch events from a calendar.
+    ) -> tuple[list[Event], int | None]:
+        """Fetch all events from a calendar, following chunk pagination.
+
+        The API returns events in chunks of ~300. Each response includes a
+        ``chunk`` flag (true = more data available) and a ``since`` cursor.
+        This method follows all chunks until ``chunk`` is false.
 
         Args:
             calendar_id: The calendar's internal numeric ID.
@@ -130,15 +134,39 @@ class TimeTreeApiClient:
                 Only events modified after this time are returned.
 
         Returns:
-            List of events (may include soft-deleted ones with ``deleted_at`` set).
+            A tuple of (events, last_since) where last_since is the cursor
+            for the next delta sync call.
         """
         url = CALENDAR_EVENTS_ENDPOINT.format(calendar_id=calendar_id)
-        params: dict[str, str] = {}
-        if since is not None:
-            params["since"] = str(since)
-        data = await self._request("GET", url, params=params)
-        raw = data if isinstance(data, list) else data.get("events", [])
-        return [Event.from_api_response(e, calendar_id=calendar_id) for e in raw]
+        all_events: list[Event] = []
+        cursor = since
+        last_since: int | None = since
+
+        while True:
+            params: dict[str, str] = {}
+            if cursor is not None:
+                params["since"] = str(cursor)
+
+            data = await self._request("GET", url, params=params)
+
+            if isinstance(data, dict):
+                raw = data.get("events", [])
+                has_more = data.get("chunk", False) is True
+                cursor = data.get("since")
+                if cursor is not None:
+                    last_since = cursor
+            else:
+                raw = data if isinstance(data, list) else []
+                has_more = False
+
+            all_events.extend(
+                Event.from_api_response(e, calendar_id=calendar_id) for e in raw
+            )
+
+            if not has_more:
+                break
+
+        return all_events, last_since
 
     async def async_create_event(
         self,

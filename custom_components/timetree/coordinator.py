@@ -63,12 +63,12 @@ class TimeTreeCalendarCoordinator(DataUpdateCoordinator[dict[str, Event]]):
     async def _async_update_data(self) -> dict[str, Event]:
         """Fetch events via delta sync and merge into the local store."""
         try:
-            events = await self._client.async_get_events(
+            events, new_since = await self._client.async_get_events(
                 self._calendar_id, since=self._last_sync_ms
             )
         except AuthenticationError:
             if await self._try_reauth():
-                events = await self._client.async_get_events(
+                events, new_since = await self._client.async_get_events(
                     self._calendar_id, since=self._last_sync_ms
                 )
             else:
@@ -81,17 +81,15 @@ class TimeTreeCalendarCoordinator(DataUpdateCoordinator[dict[str, Event]]):
             raise UpdateFailed(f"API error: {err}") from err
 
         # Merge into store
-        latest_updated: int = self._last_sync_ms or 0
         for event in events:
             if event.is_deleted:
                 self._events.pop(event.id, None)
             else:
                 self._events[event.id] = event
-            if event.updated_at and event.updated_at > latest_updated:
-                latest_updated = event.updated_at
 
-        if latest_updated > (self._last_sync_ms or 0):
-            self._last_sync_ms = latest_updated
+        # Use the server-provided cursor for the next delta sync
+        if new_since is not None:
+            self._last_sync_ms = new_since
 
         return self._events
 

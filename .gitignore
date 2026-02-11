@@ -4,4 +4,6 @@ __pycache__/
 dist/
 .DS_Store
 .env
+.venv/
+.pytest_cache/
 test_api_live.py

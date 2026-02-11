@@ -594,6 +594,7 @@ class TestKwargsToMutation:
         })
         assert mutation.title == "Vacation"
         assert mutation.all_day is True
+        # HA end is exclusive (Jul 8), TimeTree end is inclusive (Jul 7)
         assert mutation.start_at < mutation.end_at
 
     def test_start_end_keys(self):
@@ -633,6 +634,25 @@ class TestKwargsToMutation:
         })
         assert mutation.title == "All day from UI"
         assert mutation.all_day is True
+        # HA end is exclusive (Jul 2), TimeTree uses inclusive (Jul 1)
+        # So for a single-day event, start_at == end_at
+        assert mutation.start_at == mutation.end_at
+
+    def test_allday_multiday_end_at_is_inclusive(self):
+        """Multi-day all-day: HA end=Jul 4 (exclusive) → TT end=Jul 3 (inclusive)."""
+        mutation = _kwargs_to_mutation({
+            "summary": "Multi-day",
+            "start_date": date(2026, 7, 1),
+            "end_date": date(2026, 7, 4),  # 3 days: Jul 1, 2, 3
+        })
+        assert mutation.all_day is True
+        assert mutation.start_at < mutation.end_at
+        # end_at should be Jul 3 midnight UTC
+        from zoneinfo import ZoneInfo as ZI
+        expected_end = int(
+            datetime(2026, 7, 3, 0, 0, tzinfo=ZI("UTC")).timestamp() * 1000
+        )
+        assert mutation.end_at == expected_end
 
     def test_string_datetime_parsed(self):
         """String datetimes should be auto-parsed."""
@@ -725,3 +745,78 @@ class TestRecurringEventsFutureExpansion:
         for r in results:
             duration = r.end - r.start
             assert duration == timedelta(minutes=90)
+
+
+# =========================================================================== #
+#  14. EventMutation.to_api_dict – API body completeness
+# =========================================================================== #
+
+
+class TestEventMutationToApiDict:
+    """Ensure to_api_dict produces a complete body for the TimeTree API."""
+
+    def test_includes_all_required_fields(self):
+        from custom_components.timetree.timetree_api.models import EventMutation
+        m = EventMutation(
+            title="Test",
+            all_day=True,
+            start_at=1000,
+            end_at=1000,
+        )
+        d = m.to_api_dict()
+        # All fields the TimeTree API expects must be present
+        assert "title" in d
+        assert "all_day" in d
+        assert "start_at" in d
+        assert "end_at" in d
+        assert "start_timezone" in d
+        assert "end_timezone" in d
+        assert "category" in d
+        assert "label_id" in d
+        assert "note" in d
+        assert "location" in d
+        assert "attendees" in d
+        assert "recurrences" in d
+        assert "alerts" in d
+        assert "file_uuids" in d
+        assert "parent_id" in d
+        assert "attachment" in d
+
+    def test_defaults_for_empty_fields(self):
+        from custom_components.timetree.timetree_api.models import EventMutation
+        m = EventMutation(
+            title="Test",
+            all_day=False,
+            start_at=1000,
+            end_at=2000,
+        )
+        d = m.to_api_dict()
+        # Empty strings instead of None for note/location
+        assert d["note"] == ""
+        assert d["location"] == ""
+        # Default label_id
+        assert d["label_id"] == 1
+        # Empty lists
+        assert d["attendees"] == []
+        assert d["recurrences"] == []
+        assert d["alerts"] == []
+        assert d["file_uuids"] == []
+        assert d["attachment"] == {"url": "", "virtual_user_attendees": []}
+
+    def test_snake_case_keys(self):
+        """Keys must be snake_case (not camelCase) for the TimeTree API."""
+        from custom_components.timetree.timetree_api.models import EventMutation
+        m = EventMutation(
+            title="Test",
+            all_day=True,
+            start_at=1000,
+            end_at=1000,
+        )
+        d = m.to_api_dict()
+        # Verify snake_case, not camelCase
+        assert "start_at" in d
+        assert "startAt" not in d
+        assert "all_day" in d
+        assert "allDay" not in d
+        assert "start_timezone" in d
+        assert "startTimezone" not in d

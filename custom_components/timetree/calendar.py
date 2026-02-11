@@ -118,7 +118,9 @@ class TimeTreeCalendarEntity(
 
     async def async_create_event(self, **kwargs: Any) -> None:
         """Create a new event on this calendar."""
+        _LOGGER.debug("async_create_event called with kwargs: %s", kwargs)
         mutation = _kwargs_to_mutation(kwargs)
+        _LOGGER.debug("Created mutation: %s", mutation)
         await self.coordinator._client.async_create_event(
             self.coordinator.calendar_id, mutation
         )
@@ -367,13 +369,19 @@ def _kwargs_to_mutation(data: dict[str, Any]) -> EventMutation:
             dtstart = dtstart.date()
         if isinstance(dtend, datetime):
             dtend = dtend.date()
+        # HA uses exclusive end dates; TimeTree uses inclusive.
+        # Convert: HA end_date (exclusive) → TimeTree end_at (inclusive)
+        # e.g. HA start=Feb12, end=Feb13 (1 day) → TT start=Feb12, end=Feb12
+        tt_end = dtend - timedelta(days=1)
+        if tt_end < dtstart:
+            tt_end = dtstart
         tz_name = "UTC"
         start_ms = int(
             datetime.combine(dtstart, datetime.min.time(), tzinfo=ZoneInfo(tz_name)).timestamp()
             * 1000
         )
         end_ms = int(
-            datetime.combine(dtend, datetime.min.time(), tzinfo=ZoneInfo(tz_name)).timestamp()
+            datetime.combine(tt_end, datetime.min.time(), tzinfo=ZoneInfo(tz_name)).timestamp()
             * 1000
         )
     else:

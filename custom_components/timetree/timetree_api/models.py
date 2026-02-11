@@ -172,10 +172,10 @@ class EventMutation:
     def to_api_dict(self) -> dict[str, Any]:
         """Convert to a dict for the API request body (snake_case).
 
-        The client will camelize keys before sending.
-        Only includes fields that are set to avoid sending unnecessary nulls.
+        The TimeTree API expects all fields to be present with sensible
+        defaults (empty strings instead of null, empty lists, etc.).
         """
-        result: dict[str, Any] = {
+        return {
             "title": self.title,
             "all_day": self.all_day,
             "start_at": self.start_at,
@@ -183,24 +183,18 @@ class EventMutation:
             "start_timezone": self.start_timezone,
             "end_timezone": self.end_timezone,
             "category": self.category.value,
+            "label_id": self.label_id if self.label_id is not None else 1,
+            "note": self.note or "",
+            "location": self.location or "",
+            "location_lat": self.location_lat,
+            "location_lon": self.location_lon,
+            "attendees": list(self.attendees),
+            "recurrences": list(self.recurrences),
+            "alerts": list(self.alerts),
+            "file_uuids": [],
+            "parent_id": None,
+            "attachment": {"url": "", "virtual_user_attendees": []},
         }
-        if self.label_id is not None:
-            result["label_id"] = self.label_id
-        if self.note is not None:
-            result["note"] = self.note
-        if self.location is not None:
-            result["location"] = self.location
-        if self.location_lat is not None:
-            result["location_lat"] = self.location_lat
-        if self.location_lon is not None:
-            result["location_lon"] = self.location_lon
-        if self.attendees:
-            result["attendees"] = list(self.attendees)
-        if self.recurrences:
-            result["recurrences"] = list(self.recurrences)
-        if self.alerts:
-            result["alerts"] = list(self.alerts)
-        return result
 
 
 def _parse_category(value: Any) -> EventCategory:

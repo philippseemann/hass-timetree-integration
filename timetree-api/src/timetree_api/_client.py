@@ -8,7 +8,7 @@ from typing import Any
 import aiohttp
 
 from ._auth import TimeTreeAuth
-from ._serialization import camelize, decamelize
+from ._serialization import decamelize
 from ._throttle import RequestThrottle
 from .const import (
     CALENDARS_ENDPOINT,
@@ -53,6 +53,7 @@ class TimeTreeApiClient:
         self._session = session or aiohttp.ClientSession()
         self._auth = TimeTreeAuth(self._session)
         self._throttle = RequestThrottle(min_interval=request_interval)
+        self._user_id: int | None = None
 
     async def __aenter__(self) -> TimeTreeApiClient:
         return self
@@ -74,13 +75,20 @@ class TimeTreeApiClient:
 
         Performs the full login flow: fetches CSRF token from the signin page,
         then submits credentials. The session cookie is stored in the
-        session's cookie jar for subsequent requests.
+        session's cookie jar for subsequent requests. Also fetches the
+        user ID needed for event creation.
 
         Raises:
             AuthenticationError: On invalid credentials or CSRF failure.
             ApiConnectionError: If the server is unreachable.
         """
         await self._auth.authenticate(email, password)
+        # Fetch user ID needed for attendees field in event creation
+        try:
+            user = await self.async_get_user()
+            self._user_id = int(user.id)
+        except (ValueError, TypeError):
+            self._user_id = None
 
     async def async_validate_session(self) -> bool:
         """Check whether the current session is still valid.
@@ -177,6 +185,9 @@ class TimeTreeApiClient:
         url = CALENDAR_EVENT_ENDPOINT.format(calendar_id=calendar_id)
         body = event.to_api_dict()
         body["id"] = uuid.uuid4().hex
+        # Ensure the current user is listed as attendee
+        if self._user_id is not None and not body.get("attendees"):
+            body["attendees"] = [self._user_id]
         data = await self._request("POST", url, json_body=body)
         event_data = data.get("event", data) if isinstance(data, dict) else data
         return Event.from_api_response(event_data, calendar_id=calendar_id)
@@ -228,8 +239,8 @@ class TimeTreeApiClient:
     ) -> Any:
         """Execute an API request with throttling, auth, and serialization.
 
-        All outgoing JSON bodies are camelized; all incoming JSON responses
-        are decamelized. The 100ms throttle is applied before each request.
+        Outgoing JSON bodies are sent as-is (the TimeTree API expects
+        snake_case keys). Incoming JSON responses are decamelized.
 
         Raises:
             AuthenticationError: On 401/403 responses.
@@ -246,7 +257,7 @@ class TimeTreeApiClient:
         if params:
             kwargs["params"] = params
         if json_body is not None:
-            kwargs["json"] = camelize(json_body)
+            kwargs["json"] = json_body
 
         try:
             async with self._session.request(method, url, **kwargs) as resp:

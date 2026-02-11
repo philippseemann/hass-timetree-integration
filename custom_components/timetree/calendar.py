@@ -63,12 +63,15 @@ class TimeTreeCalendarEntity(
 
         candidates: list[CalendarEvent] = []
         for ev in (self.coordinator.data or {}).values():
-            if ev.is_recurring:
-                candidates.extend(_expand_recurring(ev, now, look_ahead))
-            else:
-                end = _to_datetime(ev, use_end=True)
-                if end > now:
-                    candidates.append(_map_event(ev))
+            try:
+                if ev.is_recurring:
+                    candidates.extend(_expand_recurring(ev, now, look_ahead))
+                else:
+                    end = _to_datetime(ev, use_end=True)
+                    if end > now:
+                        candidates.append(_map_event(ev))
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug("Skipping event %s in state: %s", ev.id, exc_info=True)
 
         if not candidates:
             return None
@@ -87,22 +90,28 @@ class TimeTreeCalendarEntity(
         all_events = self.coordinator.data or {}
 
         for ev in all_events.values():
-            # Recurring events must NOT be filtered by the original
-            # occurrence dates – they are expanded below and the expansion
-            # itself applies the date-range filter.
-            if ev.is_recurring:
-                events.extend(
-                    _expand_recurring(ev, start_date, end_date)
+            try:
+                # Recurring events must NOT be filtered by the original
+                # occurrence dates – they are expanded below and the expansion
+                # itself applies the date-range filter.
+                if ev.is_recurring:
+                    events.extend(
+                        _expand_recurring(ev, start_date, end_date)
+                    )
+                    continue
+
+                ev_start = _to_datetime(ev, use_end=False)
+                ev_end = _to_datetime(ev, use_end=True)
+
+                if ev_end <= start_date or ev_start >= end_date:
+                    continue
+
+                events.append(_map_event(ev))
+            except Exception:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Failed to process event %s (%s)",
+                    ev.id, ev.title, exc_info=True,
                 )
-                continue
-
-            ev_start = _to_datetime(ev, use_end=False)
-            ev_end = _to_datetime(ev, use_end=True)
-
-            if ev_end <= start_date or ev_start >= end_date:
-                continue
-
-            events.append(_map_event(ev))
 
         events.sort(key=_sort_key)
         return events
@@ -149,6 +158,27 @@ class TimeTreeCalendarEntity(
 # --------------------------------------------------------------------------- #
 #  Mapping helpers
 # --------------------------------------------------------------------------- #
+
+
+def _fix_rrule_until_tz(rule_str: str) -> str:
+    """Ensure UNTIL values in RRULE strings are UTC-qualified.
+
+    dateutil requires UNTIL to be in UTC (suffixed with 'Z') when dtstart is
+    timezone-aware.  TimeTree sometimes provides bare UNTIL values like
+    ``UNTIL=20210429`` which cause a ``ValueError``.  This helper appends
+    ``T000000Z`` when no time/zone component is present.
+    """
+    import re  # noqa: PLC0415
+
+    def _fix_until(m: re.Match) -> str:
+        val = m.group(1)
+        # Already has a 'Z' or time component → leave as-is
+        if "T" in val or val.endswith("Z"):
+            return m.group(0)
+        # Bare date like "20210429" → make it UTC midnight
+        return f"UNTIL={val}T000000Z"
+
+    return re.sub(r"UNTIL=([^;]+)", _fix_until, rule_str)
 
 
 def _sort_key(ev: CalendarEvent) -> datetime:
@@ -230,7 +260,8 @@ def _expand_recurring(
     for rule_str in event.recurrences:
         if rule_str.startswith("RRULE:"):
             try:
-                rule = rrulestr(rule_str, dtstart=dt_start)
+                fixed = _fix_rrule_until_tz(rule_str)
+                rule = rrulestr(fixed, dtstart=dt_start)
                 rset.rrule(rule)
                 has_rrule = True
             except (ValueError, TypeError):

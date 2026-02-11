@@ -41,10 +41,15 @@ class TimeTreeAuth:
         return self._authenticated
 
     async def authenticate(self, email: str, password: str) -> None:
-        """Perform the full two-step login flow.
+        """Perform the full login flow.
 
         1. GET ``/signin`` to extract CSRF token and obtain a session cookie.
         2. PUT ``/api/v1/auth/email/signin`` with credentials.
+        3. Refresh the CSRF token from an authenticated page.
+
+        Step 3 is needed because Rails rotates the CSRF token after login.
+        The token obtained from ``/signin`` is only valid for the login
+        request itself; subsequent mutating API calls require a fresh token.
 
         Raises:
             AuthenticationError: On invalid credentials or missing CSRF token.
@@ -52,6 +57,8 @@ class TimeTreeAuth:
         """
         await self._fetch_csrf_token()
         await self._submit_credentials(email, password)
+        # Rails rotates the CSRF token after login; fetch a fresh one.
+        await self._fetch_csrf_token()
         self._authenticated = True
 
     async def validate_session(self) -> bool:

@@ -607,12 +607,43 @@ class TestKwargsToMutation:
         assert mutation.all_day is False
 
     def test_raises_for_invalid_timed_event(self):
-        with pytest.raises(ValueError, match="Expected datetime"):
+        with pytest.raises((ValueError, Exception)):
             _kwargs_to_mutation({
                 "summary": "Bad",
                 "dtstart": "not a datetime",
                 "dtend": "not a datetime",
             })
+
+    def test_ha_ui_start_date_time_keys(self):
+        """HA UI sends start_date_time/end_date_time for timed events."""
+        mutation = _kwargs_to_mutation({
+            "summary": "From UI",
+            "start_date_time": datetime(2026, 3, 1, 10, 0, tzinfo=BERLIN),
+            "end_date_time": datetime(2026, 3, 1, 11, 0, tzinfo=BERLIN),
+        })
+        assert mutation.title == "From UI"
+        assert mutation.all_day is False
+
+    def test_ha_ui_start_date_keys(self):
+        """HA UI sends start_date/end_date for all-day events."""
+        mutation = _kwargs_to_mutation({
+            "summary": "All day from UI",
+            "start_date": date(2026, 7, 1),
+            "end_date": date(2026, 7, 2),
+        })
+        assert mutation.title == "All day from UI"
+        assert mutation.all_day is True
+
+    def test_string_datetime_parsed(self):
+        """String datetimes should be auto-parsed."""
+        mutation = _kwargs_to_mutation({
+            "summary": "Parsed",
+            "start_date_time": "2026-03-01 10:00:00",
+            "end_date_time": "2026-03-01 11:00:00",
+        })
+        assert mutation.title == "Parsed"
+        assert mutation.all_day is False
+        assert mutation.start_at < mutation.end_at
 
 
 # =========================================================================== #

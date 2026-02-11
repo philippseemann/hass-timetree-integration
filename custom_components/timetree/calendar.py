@@ -328,13 +328,45 @@ def _expand_recurring(
 
 
 def _kwargs_to_mutation(data: dict[str, Any]) -> EventMutation:
-    """Convert HA calendar service call data to an EventMutation."""
-    dtstart = data.get("dtstart") or data.get("start")
-    dtend = data.get("dtend") or data.get("end")
+    """Convert HA calendar service call data to an EventMutation.
 
-    all_day = isinstance(dtstart, date) and not isinstance(dtstart, datetime)
+    HA passes different keys depending on the source:
+    - UI/service call: start_date_time / end_date_time (timed)
+                       start_date / end_date (all-day)
+    - Automation:      dtstart / dtend  OR  start / end
+    """
+    # Determine event type based on which keys are present.
+    # HA uses start_date/end_date for all-day, start_date_time/end_date_time for timed.
+    if data.get("start_date_time") or (data.get("dtstart") and isinstance(data.get("dtstart"), datetime)):
+        # Timed event
+        dtstart = data.get("start_date_time") or data.get("dtstart") or data.get("start")
+        dtend = data.get("end_date_time") or data.get("dtend") or data.get("end")
+        all_day = False
+    elif data.get("start_date") or (data.get("dtstart") and isinstance(data.get("dtstart"), date) and not isinstance(data.get("dtstart"), datetime)):
+        # All-day event
+        dtstart = data.get("start_date") or data.get("dtstart") or data.get("start")
+        dtend = data.get("end_date") or data.get("dtend") or data.get("end")
+        all_day = True
+    else:
+        # Fallback: try generic keys
+        dtstart = data.get("dtstart") or data.get("start")
+        dtend = data.get("dtend") or data.get("end")
+        all_day = isinstance(dtstart, date) and not isinstance(dtstart, datetime)
+
+    # Parse strings if needed (HA may pass strings from service calls)
+    if isinstance(dtstart, str):
+        from dateutil.parser import parse as dtparse  # noqa: PLC0415
+        dtstart = dtparse(dtstart)
+    if isinstance(dtend, str):
+        from dateutil.parser import parse as dtparse  # noqa: PLC0415
+        dtend = dtparse(dtend)
 
     if all_day:
+        # Ensure we have date objects
+        if isinstance(dtstart, datetime):
+            dtstart = dtstart.date()
+        if isinstance(dtend, datetime):
+            dtend = dtend.date()
         tz_name = "UTC"
         start_ms = int(
             datetime.combine(dtstart, datetime.min.time(), tzinfo=ZoneInfo(tz_name)).timestamp()
@@ -346,8 +378,12 @@ def _kwargs_to_mutation(data: dict[str, Any]) -> EventMutation:
         )
     else:
         if not isinstance(dtstart, datetime) or not isinstance(dtend, datetime):
-            msg = "Expected datetime for timed events"
+            msg = f"Expected datetime for timed events, got {type(dtstart).__name__}/{type(dtend).__name__}"
             raise ValueError(msg)
+        if dtstart.tzinfo is None:
+            dtstart = dtstart.replace(tzinfo=ZoneInfo("UTC"))
+        if dtend.tzinfo is None:
+            dtend = dtend.replace(tzinfo=ZoneInfo("UTC"))
         tz_name = str(dtstart.tzinfo) if dtstart.tzinfo else "UTC"
         start_ms = int(dtstart.timestamp() * 1000)
         end_ms = int(dtend.timestamp() * 1000)
